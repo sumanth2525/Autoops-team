@@ -1,0 +1,100 @@
+================================================================================
+  Supabase Setup - Quick Commands (Tables Already Created)
+================================================================================
+
+STEP 1: Get Supabase Connection String
+----------------------------------------
+1. In Supabase dashboard, click "Connect" button (top right)
+2. Copy "Connection string (URI)" 
+3. Format: postgresql://postgres:PASSWORD@db.xxxxx.supabase.co:5432/postgres
+4. Replace PASSWORD with your actual database password
+   (Settings → Database → Database Password)
+
+STEP 2: Create .env File
+--------------------------
+notepad .env
+
+# Add these lines (replace with your Supabase values):
+DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.xxxxx.supabase.co:5432/postgres?sslmode=require
+DB_SSL=true
+JWT_SECRET=your-secret-key-here-change-this
+PORT=3001
+
+STEP 3: Install Dependencies
+------------------------------
+# Python:
+pip install -r requirements.txt
+
+# Node.js:
+npm install
+
+STEP 4: Create Indexes & Trigger (Optional but Recommended)
+-------------------------------------------------------------
+# In Supabase SQL Editor, run:
+CREATE INDEX IF NOT EXISTS "IX_Users_Username" ON "Users"("Username");
+CREATE INDEX IF NOT EXISTS "IX_Users_Email" ON "Users"("Email");
+CREATE INDEX IF NOT EXISTS "IX_Tasks_UserId" ON "Tasks"("UserId");
+CREATE INDEX IF NOT EXISTS "IX_Tasks_Status" ON "Tasks"("Status");
+
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW."UpdatedAt" = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+DROP TRIGGER IF EXISTS update_tasks_updated_at ON "Tasks";
+CREATE TRIGGER update_tasks_updated_at
+    BEFORE UPDATE ON "Tasks"
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+STEP 5: Run Application
+------------------------
+# Python:
+python app.py
+
+# Node.js:
+npm start
+
+STEP 6: Test Connection
+------------------------
+1. Open browser: http://localhost:3001
+2. Check console for: "✅ Connected to PostgreSQL successfully"
+3. Try to register a new user
+4. Check Supabase Table Editor - user should appear
+
+VERIFY TABLES STRUCTURE
+------------------------
+Make sure your tables have these columns:
+
+Users: Id, Username, Email, Password, FullName, CreatedAt, LastLogin
+Tasks: Id, UserId, TaskId, Type, Title, Description, Assignee, Priority, Status, CreatedAt, UpdatedAt
+
+If missing columns, add them:
+ALTER TABLE "Tasks" ADD COLUMN IF NOT EXISTS "TaskId" VARCHAR(50);
+ALTER TABLE "Tasks" ADD COLUMN IF NOT EXISTS "Type" VARCHAR(20) DEFAULT 'task';
+
+TROUBLESHOOTING
+---------------
+# Check .env file
+type .env
+
+# Test Python connection
+python -c "import psycopg2; import os; from dotenv import load_dotenv; load_dotenv(); conn = psycopg2.connect(os.getenv('DATABASE_URL')); print('✅ Connected!'); conn.close()"
+
+# Test Node.js connection
+node -e "require('dotenv').config(); const {Pool}=require('pg'); const p=new Pool({connectionString:process.env.DATABASE_URL}); p.query('SELECT NOW()').then(r=>{console.log('✅ Connected!',r.rows[0]); p.end()})"
+
+QUICK START (All Commands)
+---------------------------
+notepad .env
+pip install -r requirements.txt
+python app.py
+
+# Then open: http://localhost:3001
+
+================================================================================
+For detailed instructions, see: SUPABASE-SETUP.md
+================================================================================

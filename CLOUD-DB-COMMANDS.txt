@@ -1,0 +1,82 @@
+================================================================================
+  Cloud Database Migration - Quick Commands
+================================================================================
+
+STEP 1: Get Connection String from Cloud Database
+--------------------------------------------------
+1. Open your cloud database dashboard
+2. Click "Connect" button
+3. Copy the DATABASE_URL or connection string
+   Example: postgresql://user:password@host:port/database?sslmode=require
+
+STEP 2: Create/Update .env File
+---------------------------------
+# Create .env file
+notepad .env
+
+# Add these lines (replace with your actual values):
+DATABASE_URL=postgresql://user:password@host:port/database?sslmode=require
+DB_SSL=true
+JWT_SECRET=your-secret-key-here
+PORT=3001
+
+STEP 3: Install Dependencies
+-----------------------------
+# Python:
+pip install -r requirements.txt
+
+# Node.js:
+npm install
+
+STEP 4: Set Up Database Schema (Optional - auto-creates on first run)
+----------------------------------------------------------------------
+# Option 1: Run SQL script in cloud database dashboard
+# Copy contents of: database-schema-postgresql.sql
+# Paste in SQL Editor and execute
+
+# Option 2: Use psql (if installed)
+psql "your-database-url" -f database-schema-postgresql.sql
+
+STEP 5: Run Application
+------------------------
+# Python:
+python app.py
+
+# Node.js:
+npm start
+
+STEP 6: Verify
+--------------
+1. Open browser: http://localhost:3001
+2. Try to register a new user
+3. Check console for: "✅ Connected to PostgreSQL successfully"
+
+TROUBLESHOOTING
+---------------
+# Check .env file exists
+type .env
+
+# View .env contents
+Get-Content .env
+
+# Test Python connection
+python -c "import psycopg2; conn = psycopg2.connect('your-database-url'); print('Connected!')"
+
+# Test Node.js connection
+node -e "const {Pool}=require('pg'); const p=new Pool({connectionString:process.env.DATABASE_URL}); p.query('SELECT NOW()').then(r=>{console.log('Connected!',r.rows[0]); p.end()})"
+
+QUICK START (All Commands)
+---------------------------
+# Python:
+pip install -r requirements.txt
+notepad .env
+python app.py
+
+# Node.js:
+npm install
+notepad .env
+npm start
+
+================================================================================
+For detailed instructions, see: CLOUD-DATABASE-SETUP.md
+================================================================================

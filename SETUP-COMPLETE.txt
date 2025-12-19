@@ -1,0 +1,60 @@
+================================================================================
+  Setup Complete - Next Steps
+================================================================================
+
+✅ COMPLETED:
+-----------
+1. ✅ Installed psycopg3 (PostgreSQL driver for Python 3.13)
+2. ✅ Updated requirements.txt
+3. ✅ Updated app.py to support psycopg3
+4. ✅ All dependencies installed
+
+📝 NEXT STEPS:
+------------
+
+STEP 1: Add Your Supabase Connection String
+--------------------------------------------
+1. Open Supabase Dashboard
+2. Click "Connect" button (top right)
+3. Copy "Connection string (URI)"
+4. Edit .env file:
+   notepad .env
+
+5. Replace the DATABASE_URL line with your actual connection string:
+   DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.xxxxx.supabase.co:5432/postgres?sslmode=require
+
+   ⚠️  IMPORTANT: Replace YOUR_PASSWORD with your actual database password
+   ⚠️  Replace xxxxx with your actual Supabase project reference
+
+STEP 2: Set JWT Secret
+------------------------
+In .env file, change:
+JWT_SECRET=your-secret-key-here-change-this-to-random-string
+
+To a random string (e.g., generate one at: https://randomkeygen.com/)
+
+STEP 3: Run the Application
+----------------------------
+python app.py
+
+STEP 4: Test Connection
+-----------------------
+1. Open browser: http://localhost:3001
+2. Check console for: "✅ Connected to PostgreSQL successfully"
+3. Try registering a new user
+4. Check Supabase Table Editor - user should appear
+
+TROUBLESHOOTING:
+---------------
+If you see connection errors:
+1. Verify DATABASE_URL in .env is correct
+2. Make sure password doesn't have special characters (or URL-encode them)
+3. Check that ?sslmode=require is at the end of DATABASE_URL
+
+Test connection manually:
+python -c "import psycopg; import os; from dotenv import load_dotenv; load_dotenv(); conn = psycopg.connect(os.getenv('DATABASE_URL')); print('✅ Connected!'); conn.close()"
+
+================================================================================
+Ready to connect! Just add your Supabase DATABASE_URL to .env file.
+================================================================================
+

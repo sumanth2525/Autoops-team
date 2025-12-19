@@ -22,19 +22,15 @@ from datetime import datetime, timedelta
 from functools import wraps
 from dotenv import load_dotenv
 
-# Try to import SQL Server library
+# Try to import PostgreSQL library
 try:
-    import pyodbc
-    SQL_LIBRARY = 'pyodbc'
+    import psycopg2
+    from psycopg2 import pool
+    POSTGRES_AVAILABLE = True
 except ImportError:
-    try:
-        import pymssql
-        SQL_LIBRARY = 'pymssql'
-    except ImportError:
-        SQL_LIBRARY = None
-        print('⚠️  No SQL Server library found. Please install pyodbc or pymssql:')
-        print('   pip install pyodbc  # Recommended for Python 3.8-3.12')
-        print('   Or: pip install pymssql')
+    POSTGRES_AVAILABLE = False
+    print('⚠️  PostgreSQL library not found. Please install psycopg2-binary:')
+    print('   pip install psycopg2-binary')
 
 # Load environment variables
 load_dotenv()
@@ -72,69 +68,55 @@ GMAIL_SMTP_PASSWORD = os.getenv('GMAIL_SMTP_PASSWORD')
 GMAIL_SENDER_EMAIL = os.getenv('GMAIL_SENDER_EMAIL')
 GMAIL_SENDER_NAME = os.getenv('GMAIL_SENDER_NAME', 'AutoOps Team')
 
-# SQL Server Configuration
-DB_SERVER = os.getenv('DB_SERVER', 'SUMANTH\\SQLEXPRESS')
-DB_NAME = os.getenv('DB_NAME', 'AutoOpsDB')
-DB_USER = os.getenv('DB_USER', '')
+# PostgreSQL Configuration (Cloud Database)
+DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_PORT = os.getenv('DB_PORT', '5432')
+DB_NAME = os.getenv('DB_NAME', 'postgres')
+DB_USER = os.getenv('DB_USER', 'postgres')
 DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+# Alternative: Use DATABASE_URL if provided (common in cloud platforms)
+DATABASE_URL = os.getenv('DATABASE_URL', '')
 
-# Database connection
-db_conn = None
+# Database connection pool
+db_pool = None
 
 def get_db_connection():
-    """Get SQL Server database connection"""
-    global db_conn
+    """Get PostgreSQL database connection"""
+    global db_pool
     
-    if SQL_LIBRARY is None:
-        print('[ERROR] SQL Server library not installed. Please install pyodbc or pymssql.')
+    if not POSTGRES_AVAILABLE:
+        print('[ERROR] PostgreSQL library not installed. Please install psycopg2-binary.')
         return None
     
     try:
-        if db_conn:
-            return db_conn
-        
-        if SQL_LIBRARY == 'pyodbc':
-            # Use pyodbc (recommended)
-            if DB_USER and DB_PASSWORD:
-                conn_str = (
-                    f'DRIVER={{ODBC Driver 17 for SQL Server}};'
-                    f'SERVER={DB_SERVER};'
-                    f'DATABASE={DB_NAME};'
-                    f'UID={DB_USER};'
-                    f'PWD={DB_PASSWORD};'
-                    f'TrustServerCertificate=yes;'
-                )
+        # Initialize connection pool if not exists
+        if db_pool is None:
+            if DATABASE_URL:
+                # Use DATABASE_URL (common in cloud platforms like Railway, Heroku, etc.)
+                db_pool = psycopg2.pool.SimpleConnectionPool(1, 20, DATABASE_URL)
             else:
-                conn_str = (
-                    f'DRIVER={{ODBC Driver 17 for SQL Server}};'
-                    f'SERVER={DB_SERVER};'
-                    f'DATABASE={DB_NAME};'
-                    f'Trusted_Connection=yes;'
-                    f'TrustServerCertificate=yes;'
-                )
-            db_conn = pyodbc.connect(conn_str, timeout=10)
-            
-        elif SQL_LIBRARY == 'pymssql':
-            # Use pymssql (imported at top)
-            server_parts = DB_SERVER.replace('\\', '/').split('/')
-            server = server_parts[0]
-            
-            if DB_USER and DB_PASSWORD:
-                db_conn = pymssql.connect(  # type: ignore
-                    server=server,
-                    user=DB_USER,
-                    password=DB_PASSWORD,
+                # Use individual connection parameters
+                db_pool = psycopg2.pool.SimpleConnectionPool(
+                    1, 20,
+                    host=DB_HOST,
+                    port=DB_PORT,
                     database=DB_NAME,
-                    timeout=10
+                    user=DB_USER,
+                    password=DB_PASSWORD
                 )
-            else:
-                print('[WARNING] pymssql requires SQL Server Authentication. Please set DB_USER and DB_PASSWORD in .env')
-                return None
         
-        return db_conn
+        # Get connection from pool
+        conn = db_pool.getconn()
+        return conn
     except Exception as e:
         print(f'[WARNING] Database connection error: {str(e)}')
         return None
+
+def return_db_connection(conn):
+    """Return connection to pool"""
+    global db_pool
+    if db_pool and conn:
+        db_pool.putconn(conn)
 
 def init_database():
     """Initialize database and create tables if they don't exist"""
@@ -148,70 +130,92 @@ def init_database():
         
         # Create Users table
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND type in (N'U'))
-            BEGIN
-                CREATE TABLE [dbo].[Users] (
-                    [Id] INT IDENTITY(1,1) PRIMARY KEY,
-                    [Username] NVARCHAR(50) NOT NULL UNIQUE,
-                    [Email] NVARCHAR(100) NOT NULL UNIQUE,
-                    [Password] NVARCHAR(255) NOT NULL,
-                    [FullName] NVARCHAR(100),
-                    [CreatedAt] DATETIME DEFAULT GETDATE(),
-                    [LastLogin] DATETIME
-                );
-                CREATE INDEX IX_Users_Username ON [dbo].[Users]([Username]);
-                CREATE INDEX IX_Users_Email ON [dbo].[Users]([Email]);
-            END
+            CREATE TABLE IF NOT EXISTS "Users" (
+                "Id" SERIAL PRIMARY KEY,
+                "Username" VARCHAR(50) NOT NULL UNIQUE,
+                "Email" VARCHAR(100) NOT NULL UNIQUE,
+                "Password" VARCHAR(255) NOT NULL,
+                "FullName" VARCHAR(100),
+                "CreatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                "LastLogin" TIMESTAMP
+            )
         """)
+        
+        # Create indexes for Users
+        cursor.execute('CREATE INDEX IF NOT EXISTS "IX_Users_Username" ON "Users"("Username")')
+        cursor.execute('CREATE INDEX IF NOT EXISTS "IX_Users_Email" ON "Users"("Email")')
         
         # Create Tasks table
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Tasks]') AND type in (N'U'))
+            CREATE TABLE IF NOT EXISTS "Tasks" (
+                "Id" SERIAL PRIMARY KEY,
+                "UserId" INTEGER NOT NULL,
+                "TaskId" VARCHAR(50),
+                "Type" VARCHAR(20) DEFAULT 'task',
+                "Title" VARCHAR(200) NOT NULL,
+                "Description" TEXT,
+                "Assignee" VARCHAR(100),
+                "Priority" VARCHAR(20) DEFAULT 'medium',
+                "Status" VARCHAR(20) DEFAULT 'todo',
+                "CreatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                "UpdatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY ("UserId") REFERENCES "Users"("Id") ON DELETE CASCADE
+            )
+        """)
+        
+        # Create indexes for Tasks
+        cursor.execute('CREATE INDEX IF NOT EXISTS "IX_Tasks_UserId" ON "Tasks"("UserId")')
+        cursor.execute('CREATE INDEX IF NOT EXISTS "IX_Tasks_Status" ON "Tasks"("Status")')
+        
+        # Create function to update UpdatedAt timestamp
+        cursor.execute("""
+            CREATE OR REPLACE FUNCTION update_updated_at_column()
+            RETURNS TRIGGER AS $$
             BEGIN
-                CREATE TABLE [dbo].[Tasks] (
-                    [Id] INT IDENTITY(1,1) PRIMARY KEY,
-                    [UserId] INT NOT NULL,
-                    [TaskId] NVARCHAR(50),
-                    [Type] NVARCHAR(20) DEFAULT 'task',
-                    [Title] NVARCHAR(200) NOT NULL,
-                    [Description] NVARCHAR(MAX),
-                    [Assignee] NVARCHAR(100),
-                    [Priority] NVARCHAR(20) DEFAULT 'medium',
-                    [Status] NVARCHAR(20) DEFAULT 'todo',
-                    [CreatedAt] DATETIME DEFAULT GETDATE(),
-                    [UpdatedAt] DATETIME DEFAULT GETDATE(),
-                    FOREIGN KEY ([UserId]) REFERENCES [dbo].[Users]([Id]) ON DELETE CASCADE
-                );
-                CREATE INDEX IX_Tasks_UserId ON [dbo].[Tasks]([UserId]);
-                CREATE INDEX IX_Tasks_Status ON [dbo].[Tasks]([Status]);
-            END
+                NEW."UpdatedAt" = CURRENT_TIMESTAMP;
+                RETURN NEW;
+            END;
+            $$ language 'plpgsql'
+        """)
+        
+        # Create trigger to auto-update UpdatedAt
+        cursor.execute("""
+            DROP TRIGGER IF EXISTS update_tasks_updated_at ON "Tasks";
+            CREATE TRIGGER update_tasks_updated_at
+                BEFORE UPDATE ON "Tasks"
+                FOR EACH ROW
+                EXECUTE FUNCTION update_updated_at_column()
         """)
         
         # Add Type column if it doesn't exist (for existing tables)
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Tasks]') AND name = 'Type')
+            DO $$ 
             BEGIN
-                ALTER TABLE [dbo].[Tasks] ADD [Type] NVARCHAR(20) DEFAULT 'task';
-            END
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                              WHERE table_name='Tasks' AND column_name='Type') THEN
+                    ALTER TABLE "Tasks" ADD COLUMN "Type" VARCHAR(20) DEFAULT 'task';
+                END IF;
+            END $$;
         """)
         
         # Add TaskId column if it doesn't exist
         cursor.execute("""
-            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Tasks]') AND name = 'TaskId')
+            DO $$ 
             BEGIN
-                ALTER TABLE [dbo].[Tasks] ADD [TaskId] NVARCHAR(50);
-            END
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                              WHERE table_name='Tasks' AND column_name='TaskId') THEN
+                    ALTER TABLE "Tasks" ADD COLUMN "TaskId" VARCHAR(50);
+                END IF;
+            END $$;
         """)
         
         conn.commit()
         print('[OK] Database tables created/verified')
     except Exception as e:
         print(f'[WARNING] Error creating tables: {str(e)}')
+        conn.rollback()
     finally:
-        if conn:
-            conn.close()
-            global db_conn
-            db_conn = None
+        return_db_connection(conn)
 
 # Initialize database on startup
 try:
@@ -429,9 +433,9 @@ def get_users():
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT Id, Username, Email, FullName, CreatedAt
-            FROM [dbo].[Users]
-            ORDER BY CreatedAt DESC
+            SELECT "Id", "Username", "Email", "FullName", "CreatedAt"
+            FROM "Users"
+            ORDER BY "CreatedAt" DESC
         """)
         
         users = []
@@ -454,10 +458,7 @@ def get_users():
         print(f'Error fetching users: {str(e)}')
         return jsonify({'message': 'Server error fetching users'}), 500
     finally:
-        if conn:
-            conn.close()
-            global db_conn
-            db_conn = None
+        return_db_connection(conn)
 
 @app.route('/api/auth/register', methods=['POST'])
 def register():
@@ -484,8 +485,8 @@ def register():
         
         # Check if user already exists
         cursor.execute("""
-            SELECT * FROM [dbo].[Users] 
-            WHERE Username = ? OR Email = ?
+            SELECT * FROM "Users" 
+            WHERE "Username" = %s OR "Email" = %s
         """, (username, email))
         
         if cursor.fetchone():
@@ -496,9 +497,9 @@ def register():
         
         # Insert new user
         cursor.execute("""
-            INSERT INTO [dbo].[Users] (Username, Email, Password, FullName)
-            OUTPUT INSERTED.Id, INSERTED.Username, INSERTED.Email, INSERTED.FullName
-            VALUES (?, ?, ?, ?)
+            INSERT INTO "Users" ("Username", "Email", "Password", "FullName")
+            VALUES (%s, %s, %s, %s)
+            RETURNING "Id", "Username", "Email", "FullName"
         """, (username, email, hashed_password, full_name))
         
         result = cursor.fetchone()
@@ -528,12 +529,10 @@ def register():
             
     except Exception as e:
         print(f'Registration error: {str(e)}')
+        conn.rollback()
         return jsonify({'message': 'Server error during registration'}), 500
     finally:
-        if conn:
-            conn.close()
-            global db_conn
-            db_conn = None
+        return_db_connection(conn)
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
@@ -554,8 +553,8 @@ def login():
         
         # Find user
         cursor.execute("""
-            SELECT * FROM [dbo].[Users] 
-            WHERE Username = ?
+            SELECT * FROM "Users" 
+            WHERE "Username" = %s
         """, (username,))
         
         user = cursor.fetchone()
@@ -569,9 +568,9 @@ def login():
         
         # Update last login
         cursor.execute("""
-            UPDATE [dbo].[Users] 
-            SET LastLogin = GETDATE() 
-            WHERE Id = ?
+            UPDATE "Users" 
+            SET "LastLogin" = CURRENT_TIMESTAMP 
+            WHERE "Id" = %s
         """, (user[0],))
         conn.commit()
         
@@ -596,12 +595,10 @@ def login():
         
     except Exception as e:
         print(f'Login error: {str(e)}')
+        conn.rollback()
         return jsonify({'message': 'Server error during login'}), 500
     finally:
-        if conn:
-            conn.close()
-            global db_conn
-            db_conn = None
+        return_db_connection(conn)
 
 @app.route('/api/auth/me', methods=['GET'])
 @token_required
@@ -614,9 +611,9 @@ def get_current_user():
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT Id, Username, Email, FullName, CreatedAt, LastLogin 
-            FROM [dbo].[Users] 
-            WHERE Id = ?
+            SELECT "Id", "Username", "Email", "FullName", "CreatedAt", "LastLogin" 
+            FROM "Users" 
+            WHERE "Id" = %s
         """, (request.user['userId'],))
         
         user = cursor.fetchone()
@@ -639,10 +636,7 @@ def get_current_user():
         print(f'Get user error: {str(e)}')
         return jsonify({'message': 'Server error'}), 500
     finally:
-        if conn:
-            conn.close()
-            global db_conn
-            db_conn = None
+        return_db_connection(conn)
 
 # Task Management Routes
 
@@ -657,10 +651,10 @@ def get_tasks():
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT Id, TaskId, Type, Title, Description, Assignee, Priority, Status, CreatedAt, UpdatedAt
-            FROM [dbo].[Tasks]
-            WHERE UserId = ?
-            ORDER BY CreatedAt DESC
+            SELECT "Id", "TaskId", "Type", "Title", "Description", "Assignee", "Priority", "Status", "CreatedAt", "UpdatedAt"
+            FROM "Tasks"
+            WHERE "UserId" = %s
+            ORDER BY "CreatedAt" DESC
         """, (request.user['userId'],))
         
         tasks = []
@@ -685,10 +679,7 @@ def get_tasks():
         print(f'Get tasks error: {str(e)}')
         return jsonify({'message': 'Server error'}), 500
     finally:
-        if conn:
-            conn.close()
-            global db_conn
-            db_conn = None
+        return_db_connection(conn)
 
 @app.route('/api/tasks', methods=['POST'])
 @token_required
@@ -705,11 +696,11 @@ def create_task():
         task_id = data.get('taskId') or f'AUTO-{int(datetime.now().timestamp() * 1000) % 10000}'
         
         cursor.execute("""
-            INSERT INTO [dbo].[Tasks] (UserId, TaskId, Type, Title, Description, Assignee, Priority, Status)
-            OUTPUT INSERTED.Id, INSERTED.TaskId, INSERTED.Type, INSERTED.Title, INSERTED.Description, 
-                   INSERTED.Assignee, INSERTED.Priority, INSERTED.Status, 
-                   INSERTED.CreatedAt, INSERTED.UpdatedAt
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO "Tasks" ("UserId", "TaskId", "Type", "Title", "Description", "Assignee", "Priority", "Status")
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING "Id", "TaskId", "Type", "Title", "Description", 
+                   "Assignee", "Priority", "Status", 
+                   "CreatedAt", "UpdatedAt"
         """, (
             request.user['userId'],
             task_id,
@@ -741,12 +732,10 @@ def create_task():
         
     except Exception as e:
         print(f'Create task error: {str(e)}')
+        conn.rollback()
         return jsonify({'message': 'Server error creating task'}), 500
     finally:
-        if conn:
-            conn.close()
-            global db_conn
-            db_conn = None
+        return_db_connection(conn)
 
 @app.route('/api/tasks/<int:task_id>', methods=['PUT'])
 @token_required
@@ -762,7 +751,7 @@ def update_task(task_id):
         
         # Check if task belongs to user
         cursor.execute("""
-            SELECT UserId FROM [dbo].[Tasks] WHERE Id = ?
+            SELECT "UserId" FROM "Tasks" WHERE "Id" = %s
         """, (task_id,))
         
         task = cursor.fetchone()
@@ -770,13 +759,13 @@ def update_task(task_id):
             return jsonify({'message': 'Task not found'}), 404
         
         cursor.execute("""
-            UPDATE [dbo].[Tasks]
-            SET Type = ?, Title = ?, Description = ?, Assignee = ?, 
-                Priority = ?, Status = ?, UpdatedAt = GETDATE()
-            OUTPUT INSERTED.Id, INSERTED.TaskId, INSERTED.Type, INSERTED.Title, INSERTED.Description,
-                   INSERTED.Assignee, INSERTED.Priority, INSERTED.Status,
-                   INSERTED.CreatedAt, INSERTED.UpdatedAt
-            WHERE Id = ? AND UserId = ?
+            UPDATE "Tasks"
+            SET "Type" = %s, "Title" = %s, "Description" = %s, "Assignee" = %s, 
+                "Priority" = %s, "Status" = %s
+            WHERE "Id" = %s AND "UserId" = %s
+            RETURNING "Id", "TaskId", "Type", "Title", "Description",
+                   "Assignee", "Priority", "Status",
+                   "CreatedAt", "UpdatedAt"
         """, (
             data.get('type', 'task'),
             data.get('title'),
@@ -811,12 +800,10 @@ def update_task(task_id):
         
     except Exception as e:
         print(f'Update task error: {str(e)}')
+        conn.rollback()
         return jsonify({'message': 'Server error updating task'}), 500
     finally:
-        if conn:
-            conn.close()
-            global db_conn
-            db_conn = None
+        return_db_connection(conn)
 
 @app.route('/api/tasks/<int:task_id>', methods=['DELETE'])
 @token_required
@@ -831,7 +818,7 @@ def delete_task(task_id):
         
         # Check if task belongs to user
         cursor.execute("""
-            SELECT UserId FROM [dbo].[Tasks] WHERE Id = ?
+            SELECT "UserId" FROM "Tasks" WHERE "Id" = %s
         """, (task_id,))
         
         task = cursor.fetchone()
@@ -839,7 +826,7 @@ def delete_task(task_id):
             return jsonify({'message': 'Task not found'}), 404
         
         cursor.execute("""
-            DELETE FROM [dbo].[Tasks] WHERE Id = ? AND UserId = ?
+            DELETE FROM "Tasks" WHERE "Id" = %s AND "UserId" = %s
         """, (task_id, request.user['userId']))
         
         conn.commit()
@@ -848,12 +835,10 @@ def delete_task(task_id):
         
     except Exception as e:
         print(f'Delete task error: {str(e)}')
+        conn.rollback()
         return jsonify({'message': 'Server error deleting task'}), 500
     finally:
-        if conn:
-            conn.close()
-            global db_conn
-            db_conn = None
+        return_db_connection(conn)
 
 # Serve static files
 @app.route('/')
@@ -882,7 +867,10 @@ if __name__ == '__main__':
     debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
     
     print(f'Starting Flask server on port {port}...')
-    print(f'Database: {DB_NAME} on {DB_SERVER}')
+    if DATABASE_URL:
+        print(f'Database: Using DATABASE_URL (cloud database)')
+    else:
+        print(f'Database: {DB_NAME} on {DB_HOST}:{DB_PORT}')
     print(f'Debug mode: {debug_mode}')
     
     app.run(host='0.0.0.0', port=port, debug=debug_mode)

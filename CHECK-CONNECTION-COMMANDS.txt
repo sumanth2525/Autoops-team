@@ -1,0 +1,92 @@
+================================================================================
+  Commands to Check Supabase Database Connection
+================================================================================
+
+QUICK TEST (One-Line Commands)
+-------------------------------
+
+1. Test Connection (Python - using psycopg2):
+   python test-supabase-connection.py
+
+2. Quick Connection Test (One-liner):
+   python -c "import psycopg2; from dotenv import load_dotenv; import os; load_dotenv(); conn = psycopg2.connect(os.getenv('DATABASE_URL')); print('[OK] Connected!'); cursor = conn.cursor(); cursor.execute('SELECT NOW()'); print('[TIME]', cursor.fetchone()[0]); conn.close()"
+
+3. Test with Individual Parameters:
+   python -c "import psycopg2; from dotenv import load_dotenv; import os; load_dotenv(); conn = psycopg2.connect(host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT'), database=os.getenv('DB_NAME'), user=os.getenv('DB_USER'), password=os.getenv('DB_PASSWORD'), sslmode='require'); print('[OK] Connected!'); conn.close()"
+
+4. Check Tables:
+   python -c "import psycopg2; from dotenv import load_dotenv; import os; load_dotenv(); conn = psycopg2.connect(os.getenv('DATABASE_URL')); cur = conn.cursor(); cur.execute(\"SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name\"); print('[TABLES]', [t[0] for t in cur.fetchall()]); conn.close()"
+
+5. Check Users Table Count:
+   python -c "import psycopg2; from dotenv import load_dotenv; import os; load_dotenv(); conn = psycopg2.connect(os.getenv('DATABASE_URL')); cur = conn.cursor(); cur.execute('SELECT COUNT(*) FROM \"Users\"'); print('[USERS] Count:', cur.fetchone()[0]); conn.close()"
+
+6. Check Tasks Table Count:
+   python -c "import psycopg2; from dotenv import load_dotenv; import os; load_dotenv(); conn = psycopg2.connect(os.getenv('DATABASE_URL')); cur = conn.cursor(); cur.execute('SELECT COUNT(*) FROM \"Tasks\"'); print('[TASKS] Count:', cur.fetchone()[0]); conn.close()"
+
+
+DETAILED TEST SCRIPT
+---------------------
+Run the full test script:
+   python test-supabase-connection.py
+
+This will show:
+   - Connection status
+   - Current database time
+   - List of all tables
+   - Structure of Users table
+   - Structure of Tasks table
+
+
+CHECK .ENV FILE
+---------------
+1. View .env file:
+   type .env
+
+2. Check if DATABASE_URL is set:
+   python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('[DATABASE_URL]', 'Set' if os.getenv('DATABASE_URL') else 'Not set')"
+
+3. Check all database variables:
+   python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('DB_HOST:', os.getenv('DB_HOST')); print('DB_PORT:', os.getenv('DB_PORT')); print('DB_NAME:', os.getenv('DB_NAME')); print('DB_USER:', os.getenv('DB_USER')); print('DB_PASSWORD:', '***' if os.getenv('DB_PASSWORD') else 'Not set')"
+
+
+TEST APPLICATION CONNECTION
+----------------------------
+1. Start the application:
+   python app.py
+
+2. Check if server starts successfully (look for):
+   - "[OK] Database tables created/verified"
+   - "Starting Flask server on port 3001..."
+   - "Running on http://127.0.0.1:3001"
+
+3. Test via browser:
+   - Open: http://localhost:3001
+   - Try to register a new user
+   - Check console for connection messages
+
+
+TROUBLESHOOTING COMMANDS
+-------------------------
+1. Test if psycopg2 is installed:
+   python -c "import psycopg2; print('[OK] psycopg2 version:', psycopg2.__version__)"
+
+2. Test if python-dotenv is installed:
+   python -c "import dotenv; print('[OK] python-dotenv installed')"
+
+3. Check Python version:
+   python --version
+
+4. Verify .env file exists:
+   if (Test-Path .env) { Write-Host "[OK] .env file exists" } else { Write-Host "[ERROR] .env file not found" }
+
+
+QUICKEST TEST (Recommended)
+---------------------------
+python test-supabase-connection.py
+
+This will show you everything in one go!
+
+
+================================================================================
+For more details, see: SUPABASE-SETUP.md
+================================================================================

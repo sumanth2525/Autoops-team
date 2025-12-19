@@ -1,5 +1,5 @@
 const express = require('express');
-const sql = require('mssql');
+const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
@@ -19,31 +19,32 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// SQL Server Configuration
-const dbConfig = {
-    server: process.env.DB_SERVER || 'SUMANTH\\SQLEXPRESS',
-    database: process.env.DB_NAME || 'AutoOpsDB',
-    user: process.env.DB_USER || '',
+// PostgreSQL Configuration (Cloud Database)
+// Use DATABASE_URL if provided (common in cloud platforms like Railway, Heroku, etc.)
+// Otherwise use individual connection parameters
+const dbConfig = process.env.DATABASE_URL ? {
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+} : {
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 5432,
+    database: process.env.DB_NAME || 'postgres',
+    user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || '',
-    options: {
-        encrypt: process.env.DB_ENCRYPT === 'true', // Use true for Azure SQL
-        trustServerCertificate: true, // Use true for local SQL Server
-        enableArithAbort: true
-    }
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
 };
-
-// Use Windows Authentication if no user/password provided
-if (!dbConfig.user && !dbConfig.password) {
-    dbConfig.options.trustedConnection = true;
-}
 
 let pool;
 
-// Initialize SQL Server Connection Pool
+// Initialize PostgreSQL Connection Pool
 async function initDatabase() {
     try {
-        pool = await sql.connect(dbConfig);
-        console.log('✅ Connected to SQL Server successfully');
+        pool = new Pool(dbConfig);
+        
+        // Test connection
+        const client = await pool.connect();
+        console.log('✅ Connected to PostgreSQL successfully');
+        client.release();
         
         // Create tables if they don't exist
         await createTables();
@@ -51,10 +52,9 @@ async function initDatabase() {
         console.error('⚠️  Database connection error:', err.message);
         console.error('⚠️  Server will start but database features will be unavailable');
         console.error('⚠️  Please check:');
-        console.error('   1. SQL Server is running');
-        console.error('   2. Database "AutoOpsDB" exists');
-        console.error('   3. Your Windows user has access to SQL Server');
-        console.error('   4. Server name in .env matches your SQL Server instance');
+        console.error('   1. PostgreSQL database is running');
+        console.error('   2. Database connection string is correct');
+        console.error('   3. DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD are set correctly');
         // Don't exit - allow server to start without database for testing
         pool = null;
     }
@@ -63,26 +63,68 @@ async function initDatabase() {
 // Create database tables
 async function createTables() {
     try {
-        const request = pool.request();
+        const client = await pool.connect();
         
         // Users table
-        await request.query(`
-            IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND type in (N'U'))
-            BEGIN
-                CREATE TABLE [dbo].[Users] (
-                    [Id] INT IDENTITY(1,1) PRIMARY KEY,
-                    [Username] NVARCHAR(50) NOT NULL UNIQUE,
-                    [Email] NVARCHAR(100) NOT NULL UNIQUE,
-                    [Password] NVARCHAR(255) NOT NULL,
-                    [FullName] NVARCHAR(100),
-                    [CreatedAt] DATETIME DEFAULT GETDATE(),
-                    [LastLogin] DATETIME
-                );
-                CREATE INDEX IX_Users_Username ON [dbo].[Users]([Username]);
-                CREATE INDEX IX_Users_Email ON [dbo].[Users]([Email]);
-            END
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS "Users" (
+                "Id" SERIAL PRIMARY KEY,
+                "Username" VARCHAR(50) NOT NULL UNIQUE,
+                "Email" VARCHAR(100) NOT NULL UNIQUE,
+                "Password" VARCHAR(255) NOT NULL,
+                "FullName" VARCHAR(100),
+                "CreatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                "LastLogin" TIMESTAMP
+            )
         `);
         
+        // Create indexes
+        await client.query('CREATE INDEX IF NOT EXISTS "IX_Users_Username" ON "Users"("Username")');
+        await client.query('CREATE INDEX IF NOT EXISTS "IX_Users_Email" ON "Users"("Email")');
+        
+        // Tasks table
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS "Tasks" (
+                "Id" SERIAL PRIMARY KEY,
+                "UserId" INTEGER NOT NULL,
+                "TaskId" VARCHAR(50),
+                "Type" VARCHAR(20) DEFAULT 'task',
+                "Title" VARCHAR(200) NOT NULL,
+                "Description" TEXT,
+                "Assignee" VARCHAR(100),
+                "Priority" VARCHAR(20) DEFAULT 'medium',
+                "Status" VARCHAR(20) DEFAULT 'todo',
+                "CreatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                "UpdatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY ("UserId") REFERENCES "Users"("Id") ON DELETE CASCADE
+            )
+        `);
+        
+        // Create indexes for Tasks
+        await client.query('CREATE INDEX IF NOT EXISTS "IX_Tasks_UserId" ON "Tasks"("UserId")');
+        await client.query('CREATE INDEX IF NOT EXISTS "IX_Tasks_Status" ON "Tasks"("Status")');
+        
+        // Create function to update UpdatedAt timestamp
+        await client.query(`
+            CREATE OR REPLACE FUNCTION update_updated_at_column()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                NEW."UpdatedAt" = CURRENT_TIMESTAMP;
+                RETURN NEW;
+            END;
+            $$ language 'plpgsql'
+        `);
+        
+        // Create trigger to auto-update UpdatedAt
+        await client.query(`
+            DROP TRIGGER IF EXISTS update_tasks_updated_at ON "Tasks";
+            CREATE TRIGGER update_tasks_updated_at
+                BEFORE UPDATE ON "Tasks"
+                FOR EACH ROW
+                EXECUTE FUNCTION update_updated_at_column()
+        `);
+        
+        client.release();
         console.log('✅ Database tables created/verified');
     } catch (err) {
         console.error('❌ Error creating tables:', err);
@@ -137,16 +179,12 @@ app.post('/api/auth/register', async (req, res) => {
         }
 
         // Check if user already exists
-        const checkRequest = pool.request();
-        checkRequest.input('username', sql.NVarChar, username);
-        checkRequest.input('email', sql.NVarChar, email);
-        
-        const existingUser = await checkRequest.query(`
-            SELECT * FROM [dbo].[Users] 
-            WHERE Username = @username OR Email = @email
-        `);
+        const checkResult = await pool.query(`
+            SELECT * FROM "Users" 
+            WHERE "Username" = $1 OR "Email" = $2
+        `, [username, email]);
 
-        if (existingUser.recordset.length > 0) {
+        if (checkResult.rows.length > 0) {
             return res.status(400).json({ message: 'Username or email already exists' });
         }
 
@@ -154,19 +192,13 @@ app.post('/api/auth/register', async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         // Insert new user
-        const insertRequest = pool.request();
-        insertRequest.input('username', sql.NVarChar, username);
-        insertRequest.input('email', sql.NVarChar, email);
-        insertRequest.input('password', sql.NVarChar, hashedPassword);
-        insertRequest.input('fullName', sql.NVarChar, fullName || null);
+        const result = await pool.query(`
+            INSERT INTO "Users" ("Username", "Email", "Password", "FullName")
+            VALUES ($1, $2, $3, $4)
+            RETURNING "Id", "Username", "Email", "FullName"
+        `, [username, email, hashedPassword, fullName || null]);
 
-        const result = await insertRequest.query(`
-            INSERT INTO [dbo].[Users] (Username, Email, Password, FullName)
-            OUTPUT INSERTED.Id, INSERTED.Username, INSERTED.Email, INSERTED.FullName
-            VALUES (@username, @email, @password, @fullName)
-        `);
-
-        const newUser = result.recordset[0];
+        const newUser = result.rows[0];
         
         res.status(201).json({
             message: 'User registered successfully',
@@ -197,19 +229,16 @@ app.post('/api/auth/login', async (req, res) => {
         }
 
         // Find user
-        const request = pool.request();
-        request.input('username', sql.NVarChar, username);
-        
-        const result = await request.query(`
-            SELECT * FROM [dbo].[Users] 
-            WHERE Username = @username
-        `);
+        const result = await pool.query(`
+            SELECT * FROM "Users" 
+            WHERE "Username" = $1
+        `, [username]);
 
-        if (result.recordset.length === 0) {
+        if (result.rows.length === 0) {
             return res.status(401).json({ message: 'Invalid username or password' });
         }
 
-        const user = result.recordset[0];
+        const user = result.rows[0];
 
         // Verify password
         const isValidPassword = await bcrypt.compare(password, user.Password);
@@ -218,13 +247,11 @@ app.post('/api/auth/login', async (req, res) => {
         }
 
         // Update last login
-        const updateRequest = pool.request();
-        updateRequest.input('userId', sql.Int, user.Id);
-        await updateRequest.query(`
-            UPDATE [dbo].[Users] 
-            SET LastLogin = GETDATE() 
-            WHERE Id = @userId
-        `);
+        await pool.query(`
+            UPDATE "Users" 
+            SET "LastLogin" = CURRENT_TIMESTAMP 
+            WHERE "Id" = $1
+        `, [user.Id]);
 
         // Generate JWT token
         const token = jwt.sign(
@@ -253,20 +280,17 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
             return res.status(503).json({ message: 'Database connection unavailable. Please check SQL Server configuration.' });
         }
 
-        const request = pool.request();
-        request.input('userId', sql.Int, req.user.userId);
-        
-        const result = await request.query(`
-            SELECT Id, Username, Email, FullName, CreatedAt, LastLogin 
-            FROM [dbo].[Users] 
-            WHERE Id = @userId
-        `);
+        const result = await pool.query(`
+            SELECT "Id", "Username", "Email", "FullName", "CreatedAt", "LastLogin" 
+            FROM "Users" 
+            WHERE "Id" = $1
+        `, [req.user.userId]);
 
-        if (result.recordset.length === 0) {
+        if (result.rows.length === 0) {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        res.json({ user: result.recordset[0] });
+        res.json({ user: result.rows[0] });
     } catch (error) {
         console.error('Get user error:', error);
         res.status(500).json({ message: 'Server error' });
@@ -289,14 +313,18 @@ app.get('/login.html', (req, res) => {
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📊 Database: ${dbConfig.database} on ${dbConfig.server}`);
+    if (process.env.DATABASE_URL) {
+        console.log(`📊 Database: Using DATABASE_URL (cloud database)`);
+    } else {
+        console.log(`📊 Database: ${dbConfig.database} on ${dbConfig.host}:${dbConfig.port}`);
+    }
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
     console.log('\n🛑 Shutting down server...');
     if (pool) {
-        await pool.close();
+        await pool.end();
         console.log('✅ Database connection closed');
     }
     process.exit(0);
