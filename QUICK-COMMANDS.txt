@@ -1,0 +1,91 @@
+================================================================================
+  AutoOps Task Board - Quick Commands Reference
+================================================================================
+
+PYTHON/FLASK SETUP (Recommended)
+--------------------------------
+1. Install dependencies:
+   pip install -r requirements.txt
+
+2. Install SQL Server driver:
+   pip install pyodbc
+
+3. Run server:
+   python app.py
+
+4. Access: http://localhost:3001
+
+
+NODE.JS/EXPRESS SETUP (Alternative)
+------------------------------------
+1. Install dependencies:
+   npm install
+
+2. Run server:
+   npm start
+
+3. Access: http://localhost:3001
+
+
+DATABASE SETUP
+--------------
+1. Open SQL Server Management Studio (SSMS)
+2. Connect to: SUMANTH\SQLEXPRESS
+3. Create database:
+   CREATE DATABASE AutoOpsDB;
+4. Tables will be created automatically on first connection
+
+
+TROUBLESHOOTING
+---------------
+Check if server is running:
+   netstat -ano | findstr :3001
+
+Stop Node.js processes:
+   taskkill /F /IM node.exe
+
+Check Python version:
+   python --version
+
+Check Node.js version:
+   node --version
+
+View .env file:
+   type .env
+
+Edit .env file:
+   notepad .env
+
+
+QUICK START (All-in-One)
+------------------------
+# Python:
+pip install -r requirements.txt
+pip install pyodbc
+python app.py
+
+# OR Node.js:
+npm install
+npm start
+
+# Then open browser: http://localhost:3001
+
+
+ENVIRONMENT VARIABLES (.env)
+-----------------------------
+DB_SERVER=SUMANTH\SQLEXPRESS
+DB_NAME=AutoOpsDB
+DB_USER=
+DB_PASSWORD=
+DB_ENCRYPT=false
+JWT_SECRET=your-secret-key-here
+PORT=3001
+
+
+================================================================================
+For detailed instructions, see:
+- setup-python.md (Python setup)
+- SETUP.md (Node.js setup)
+- COMMANDS.html (Interactive command page)
+================================================================================
+

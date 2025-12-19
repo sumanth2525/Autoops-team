@@ -1,0 +1,11 @@
+Flask==3.0.0
+flask-cors==4.0.0
+bcrypt==4.1.2
+PyJWT==2.8.0
+python-dotenv==1.0.0
+requests==2.31.0
+# Note: For SQL Server connection, install one of these based on your Python version:
+# Python 3.8-3.12: pip install pyodbc
+# Or use SQLAlchemy: pip install sqlalchemy pyodbc
+# For Python 3.13, you may need to use a pre-built wheel or downgrade to Python 3.12
+

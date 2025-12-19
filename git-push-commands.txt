@@ -1,0 +1,26 @@
+# Git Push Commands for AutoOps Task Board
+# Username: sumanth2525
+# Repository: autoops-task-board
+
+# Step 1: Add remote (if not already added)
+git remote add origin https://github.com/sumanth2525/autoops-task-board.git
+
+# OR if remote already exists, update it:
+# git remote set-url origin https://github.com/sumanth2525/autoops-task-board.git
+
+# Step 2: Rename branch to main
+git branch -M main
+
+# Step 3: Push to GitHub
+git push -u origin main
+
+# ============================================
+# Complete one-liner (if starting fresh):
+# ============================================
+# git init && git add . && git commit -m "Initial commit" && git branch -M main && git remote add origin https://github.com/sumanth2525/autoops-task-board.git && git push -u origin main
+
+# ============================================
+# For your current situation (already committed):
+# ============================================
+git remote add origin https://github.com/sumanth2525/autoops-task-board.git && git branch -M main && git push -u origin main
+

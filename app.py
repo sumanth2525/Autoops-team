@@ -1,0 +1,889 @@
+"""
+AutoOps Task Board - Flask Backend Server
+"""
+import sys
+# Fix Windows console encoding
+if sys.platform == 'win32':
+    import codecs
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import bcrypt
+import jwt
+import os
+import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime, timedelta
+from functools import wraps
+from dotenv import load_dotenv
+
+# Try to import SQL Server library
+try:
+    import pyodbc
+    SQL_LIBRARY = 'pyodbc'
+except ImportError:
+    try:
+        import pymssql
+        SQL_LIBRARY = 'pymssql'
+    except ImportError:
+        SQL_LIBRARY = None
+        print('⚠️  No SQL Server library found. Please install pyodbc or pymssql:')
+        print('   pip install pyodbc  # Recommended for Python 3.8-3.12')
+        print('   Or: pip install pymssql')
+
+# Load environment variables
+load_dotenv()
+
+app = Flask(__name__, static_folder='.')
+CORS(app)
+
+# Configuration
+PORT = int(os.getenv('PORT', 3001))
+JWT_SECRET = os.getenv('JWT_SECRET')
+if not JWT_SECRET:
+    raise ValueError('JWT_SECRET environment variable is required. Please set it in your .env file.')
+
+# Email Configuration
+# Method: 'api' for Brevo REST API (default), 'smtp_brevo' for Brevo SMTP, or 'smtp_gmail' for Gmail SMTP
+EMAIL_METHOD = os.getenv('EMAIL_METHOD', 'api').lower()
+
+# Brevo REST API Configuration (default)
+BREVO_API_KEY = os.getenv('BREVO_API_KEY')
+BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email'
+BREVO_SENDER_EMAIL = os.getenv('BREVO_SENDER_EMAIL', 'noreply@autoops.com')
+BREVO_SENDER_NAME = os.getenv('BREVO_SENDER_NAME', 'AutoOps Team')
+
+# Brevo SMTP Configuration
+BREVO_SMTP_SERVER = os.getenv('BREVO_SMTP_SERVER', 'smtp-relay.brevo.com')
+BREVO_SMTP_PORT = int(os.getenv('BREVO_SMTP_PORT', 587))
+BREVO_SMTP_LOGIN = os.getenv('BREVO_SMTP_LOGIN')
+BREVO_SMTP_PASSWORD = os.getenv('BREVO_SMTP_PASSWORD')
+
+# Gmail SMTP Configuration
+GMAIL_SMTP_SERVER = os.getenv('GMAIL_SMTP_SERVER', 'smtp.gmail.com')
+GMAIL_SMTP_PORT = int(os.getenv('GMAIL_SMTP_PORT', 587))
+GMAIL_SMTP_USERNAME = os.getenv('GMAIL_SMTP_USERNAME')
+GMAIL_SMTP_PASSWORD = os.getenv('GMAIL_SMTP_PASSWORD')
+GMAIL_SENDER_EMAIL = os.getenv('GMAIL_SENDER_EMAIL')
+GMAIL_SENDER_NAME = os.getenv('GMAIL_SENDER_NAME', 'AutoOps Team')
+
+# SQL Server Configuration
+DB_SERVER = os.getenv('DB_SERVER', 'SUMANTH\\SQLEXPRESS')
+DB_NAME = os.getenv('DB_NAME', 'AutoOpsDB')
+DB_USER = os.getenv('DB_USER', '')
+DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+
+# Database connection
+db_conn = None
+
+def get_db_connection():
+    """Get SQL Server database connection"""
+    global db_conn
+    
+    if SQL_LIBRARY is None:
+        print('[ERROR] SQL Server library not installed. Please install pyodbc or pymssql.')
+        return None
+    
+    try:
+        if db_conn:
+            return db_conn
+        
+        if SQL_LIBRARY == 'pyodbc':
+            # Use pyodbc (recommended)
+            if DB_USER and DB_PASSWORD:
+                conn_str = (
+                    f'DRIVER={{ODBC Driver 17 for SQL Server}};'
+                    f'SERVER={DB_SERVER};'
+                    f'DATABASE={DB_NAME};'
+                    f'UID={DB_USER};'
+                    f'PWD={DB_PASSWORD};'
+                    f'TrustServerCertificate=yes;'
+                )
+            else:
+                conn_str = (
+                    f'DRIVER={{ODBC Driver 17 for SQL Server}};'
+                    f'SERVER={DB_SERVER};'
+                    f'DATABASE={DB_NAME};'
+                    f'Trusted_Connection=yes;'
+                    f'TrustServerCertificate=yes;'
+                )
+            db_conn = pyodbc.connect(conn_str, timeout=10)
+            
+        elif SQL_LIBRARY == 'pymssql':
+            # Use pymssql (imported at top)
+            server_parts = DB_SERVER.replace('\\', '/').split('/')
+            server = server_parts[0]
+            
+            if DB_USER and DB_PASSWORD:
+                db_conn = pymssql.connect(  # type: ignore
+                    server=server,
+                    user=DB_USER,
+                    password=DB_PASSWORD,
+                    database=DB_NAME,
+                    timeout=10
+                )
+            else:
+                print('[WARNING] pymssql requires SQL Server Authentication. Please set DB_USER and DB_PASSWORD in .env')
+                return None
+        
+        return db_conn
+    except Exception as e:
+        print(f'[WARNING] Database connection error: {str(e)}')
+        return None
+
+def init_database():
+    """Initialize database and create tables if they don't exist"""
+    conn = get_db_connection()
+    if not conn:
+        print('[WARNING] Database connection unavailable. Tables will not be created.')
+        return
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Create Users table
+        cursor.execute("""
+            IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND type in (N'U'))
+            BEGIN
+                CREATE TABLE [dbo].[Users] (
+                    [Id] INT IDENTITY(1,1) PRIMARY KEY,
+                    [Username] NVARCHAR(50) NOT NULL UNIQUE,
+                    [Email] NVARCHAR(100) NOT NULL UNIQUE,
+                    [Password] NVARCHAR(255) NOT NULL,
+                    [FullName] NVARCHAR(100),
+                    [CreatedAt] DATETIME DEFAULT GETDATE(),
+                    [LastLogin] DATETIME
+                );
+                CREATE INDEX IX_Users_Username ON [dbo].[Users]([Username]);
+                CREATE INDEX IX_Users_Email ON [dbo].[Users]([Email]);
+            END
+        """)
+        
+        # Create Tasks table
+        cursor.execute("""
+            IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Tasks]') AND type in (N'U'))
+            BEGIN
+                CREATE TABLE [dbo].[Tasks] (
+                    [Id] INT IDENTITY(1,1) PRIMARY KEY,
+                    [UserId] INT NOT NULL,
+                    [TaskId] NVARCHAR(50),
+                    [Type] NVARCHAR(20) DEFAULT 'task',
+                    [Title] NVARCHAR(200) NOT NULL,
+                    [Description] NVARCHAR(MAX),
+                    [Assignee] NVARCHAR(100),
+                    [Priority] NVARCHAR(20) DEFAULT 'medium',
+                    [Status] NVARCHAR(20) DEFAULT 'todo',
+                    [CreatedAt] DATETIME DEFAULT GETDATE(),
+                    [UpdatedAt] DATETIME DEFAULT GETDATE(),
+                    FOREIGN KEY ([UserId]) REFERENCES [dbo].[Users]([Id]) ON DELETE CASCADE
+                );
+                CREATE INDEX IX_Tasks_UserId ON [dbo].[Tasks]([UserId]);
+                CREATE INDEX IX_Tasks_Status ON [dbo].[Tasks]([Status]);
+            END
+        """)
+        
+        # Add Type column if it doesn't exist (for existing tables)
+        cursor.execute("""
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Tasks]') AND name = 'Type')
+            BEGIN
+                ALTER TABLE [dbo].[Tasks] ADD [Type] NVARCHAR(20) DEFAULT 'task';
+            END
+        """)
+        
+        # Add TaskId column if it doesn't exist
+        cursor.execute("""
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Tasks]') AND name = 'TaskId')
+            BEGIN
+                ALTER TABLE [dbo].[Tasks] ADD [TaskId] NVARCHAR(50);
+            END
+        """)
+        
+        conn.commit()
+        print('[OK] Database tables created/verified')
+    except Exception as e:
+        print(f'[WARNING] Error creating tables: {str(e)}')
+    finally:
+        if conn:
+            conn.close()
+            global db_conn
+            db_conn = None
+
+# Initialize database on startup
+try:
+    init_database()
+except Exception as e:
+    print(f'[WARNING] Database initialization warning: {str(e)}')
+    print('[WARNING] Server will start but database features may be unavailable')
+
+# Authentication decorator
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        auth_header = request.headers.get('Authorization')
+        
+        if auth_header:
+            try:
+                token = auth_header.split(' ')[1]
+            except IndexError:
+                return jsonify({'message': 'Invalid token format'}), 401
+        
+        if not token:
+            return jsonify({'message': 'Token is missing'}), 401
+        
+        try:
+            data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+            request.user = data
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token has expired'}), 403
+        except jwt.InvalidTokenError:
+            return jsonify({'message': 'Invalid token'}), 403
+        
+        return f(*args, **kwargs)
+    return decorated
+
+# Routes
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({'status': 'ok', 'message': 'Server is running'})
+
+def get_email_html(name):
+    """Get HTML content for welcome email"""
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+    </head>
+    <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f5f7; margin: 0; padding: 0;">
+        <div style="max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden;">
+            <div style="background: linear-gradient(135deg, #0052cc 0%, #0065ff 100%); padding: 30px; text-align: center;">
+                <h1 style="color: #ffffff; margin: 0; font-size: 28px;">Welcome to AutoOps!</h1>
+            </div>
+            <div style="padding: 30px;">
+                <h2 style="color: #0052cc; margin-top: 0;">Hello {name}!</h2>
+                <p style="font-size: 16px; color: #172b4d;">Thank you for joining our team. You can now:</p>
+                <ul style="font-size: 16px; color: #42526e; line-height: 2;">
+                    <li>Create and manage tasks</li>
+                    <li>Track your work progress</li>
+                    <li>Collaborate with your team</li>
+                    <li>Stay organized with our Kanban board</li>
+                </ul>
+                <div style="margin: 30px 0; padding: 20px; background-color: #f4f5f7; border-radius: 6px; border-left: 4px solid #0052cc;">
+                    <p style="margin: 0; color: #172b4d; font-weight: 600;">Get started by logging in and creating your first task!</p>
+                </div>
+                <p style="color: #6b778c; font-size: 14px; margin-top: 30px;">
+                    This is an automated message. Please do not reply.
+                </p>
+            </div>
+            <div style="background-color: #f4f5f7; padding: 20px; text-align: center; border-top: 1px solid #dfe1e6;">
+                <p style="margin: 0; color: #6b778c; font-size: 12px;">
+                    © 2024 AutoOps Team. All rights reserved.
+                </p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+def send_welcome_email_via_api(email, name):
+    """Send welcome email using Brevo REST API"""
+    if not BREVO_API_KEY:
+        print('⚠️  Brevo API key not configured. Set BREVO_API_KEY in .env file')
+        return False
+    
+    try:
+        email_data = {
+            "sender": {
+                "name": BREVO_SENDER_NAME,
+                "email": BREVO_SENDER_EMAIL
+            },
+            "to": [
+                {
+                    "email": email,
+                    "name": name
+                }
+            ],
+            "subject": "Welcome to AutoOps Task Board!",
+            "htmlContent": get_email_html(name)
+        }
+        
+        headers = {
+            "accept": "application/json",
+            "api-key": BREVO_API_KEY,
+            "content-type": "application/json"
+        }
+        
+        response = requests.post(BREVO_API_URL, json=email_data, headers=headers)
+        
+        if response.status_code == 201:
+            print(f'✅ Welcome email sent to {email} via API')
+            return True
+        else:
+            print(f'⚠️  Email API response: {response.status_code} - {response.text}')
+            return False
+            
+    except Exception as e:
+        print(f'❌ Error sending email via API: {str(e)}')
+        return False
+
+def send_welcome_email_via_smtp_brevo(email, name):
+    """Send welcome email using Brevo SMTP"""
+    if not BREVO_SMTP_LOGIN or not BREVO_SMTP_PASSWORD:
+        print('⚠️  Brevo SMTP credentials not configured. Set BREVO_SMTP_LOGIN and BREVO_SMTP_PASSWORD in .env file')
+        return False
+    
+    try:
+        # Create message
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = 'Welcome to AutoOps Task Board!'
+        msg['From'] = f'{BREVO_SENDER_NAME} <{BREVO_SENDER_EMAIL}>'
+        msg['To'] = email
+        
+        # Create HTML part
+        html_part = MIMEText(get_email_html(name), 'html')
+        msg.attach(html_part)
+        
+        # Send email via SMTP
+        with smtplib.SMTP(BREVO_SMTP_SERVER, BREVO_SMTP_PORT) as server:
+            server.starttls()
+            server.login(BREVO_SMTP_LOGIN, BREVO_SMTP_PASSWORD)
+            server.send_message(msg)
+        
+        print(f'✅ Welcome email sent to {email} via Brevo SMTP')
+        return True
+        
+    except Exception as e:
+        print(f'❌ Error sending email via Brevo SMTP: {str(e)}')
+        return False
+
+def send_welcome_email_via_smtp_gmail(email, name):
+    """Send welcome email using Gmail SMTP"""
+    if not GMAIL_SMTP_USERNAME or not GMAIL_SMTP_PASSWORD:
+        print('⚠️  Gmail SMTP credentials not configured. Set GMAIL_SMTP_USERNAME and GMAIL_SMTP_PASSWORD in .env file')
+        return False
+    
+    try:
+        # Create message
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = 'Welcome to AutoOps Task Board!'
+        msg['From'] = f'{GMAIL_SENDER_NAME} <{GMAIL_SENDER_EMAIL}>'
+        msg['To'] = email
+        
+        # Create HTML part
+        html_part = MIMEText(get_email_html(name), 'html')
+        msg.attach(html_part)
+        
+        # Send email via Gmail SMTP
+        with smtplib.SMTP(GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT) as server:
+            server.starttls()
+            server.login(GMAIL_SMTP_USERNAME, GMAIL_SMTP_PASSWORD)
+            server.send_message(msg)
+        
+        print(f'✅ Welcome email sent to {email} via Gmail SMTP')
+        return True
+        
+    except Exception as e:
+        print(f'❌ Error sending email via Gmail SMTP: {str(e)}')
+        print('💡 Note: Gmail requires App Password, not regular password. Enable 2FA and generate App Password.')
+        return False
+
+def send_welcome_email(email, name):
+    """Send welcome email to new user (uses API or SMTP based on configuration)"""
+    success = False
+    
+    if EMAIL_METHOD == 'smtp_gmail':
+        success = send_welcome_email_via_smtp_gmail(email, name)
+        # Fallback to Brevo API if Gmail fails
+        if not success and BREVO_API_KEY:
+            print('⚠️  Gmail SMTP failed, trying Brevo API fallback...')
+            success = send_welcome_email_via_api(email, name)
+    elif EMAIL_METHOD == 'smtp_brevo' or EMAIL_METHOD == 'smtp':
+        success = send_welcome_email_via_smtp_brevo(email, name)
+        # Fallback to API if SMTP fails
+        if not success and BREVO_API_KEY:
+            print('⚠️  Brevo SMTP failed, trying API fallback...')
+            success = send_welcome_email_via_api(email, name)
+    else:  # Default: API
+        success = send_welcome_email_via_api(email, name)
+        # Fallback to Gmail SMTP if API fails
+        if not success and GMAIL_SMTP_USERNAME and GMAIL_SMTP_PASSWORD:
+            print('⚠️  Brevo API failed, trying Gmail SMTP fallback...')
+            success = send_welcome_email_via_smtp_gmail(email, name)
+
+@app.route('/api/users', methods=['GET'])
+@token_required
+def get_users():
+    """Get all users for team display"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'message': 'Database connection unavailable'}), 503
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT Id, Username, Email, FullName, CreatedAt
+            FROM [dbo].[Users]
+            ORDER BY CreatedAt DESC
+        """)
+        
+        users = []
+        for row in cursor.fetchall():
+            full_name = row[3] or row[1]  # Use FullName or Username as fallback
+            initials = ''.join([n[0].upper() for n in full_name.split()[:2]]) if full_name else '?'
+            
+            users.append({
+                'id': row[0],
+                'username': row[1],
+                'email': row[2],
+                'fullName': full_name,
+                'initials': initials,
+                'createdAt': row[4].isoformat() if row[4] else None
+            })
+        
+        return jsonify(users), 200
+        
+    except Exception as e:
+        print(f'Error fetching users: {str(e)}')
+        return jsonify({'message': 'Server error fetching users'}), 500
+    finally:
+        if conn:
+            conn.close()
+            global db_conn
+            db_conn = None
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """Register a new user"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'message': 'Database connection unavailable. Please check SQL Server configuration.'}), 503
+    
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        email = data.get('email')
+        password = data.get('password')
+        full_name = data.get('fullName')
+        
+        # Validation
+        if not username or not email or not password:
+            return jsonify({'message': 'Username, email, and password are required'}), 400
+        
+        if len(password) < 6:
+            return jsonify({'message': 'Password must be at least 6 characters'}), 400
+        
+        cursor = conn.cursor()
+        
+        # Check if user already exists
+        cursor.execute("""
+            SELECT * FROM [dbo].[Users] 
+            WHERE Username = ? OR Email = ?
+        """, (username, email))
+        
+        if cursor.fetchone():
+            return jsonify({'message': 'Username or email already exists'}), 400
+        
+        # Hash password
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        
+        # Insert new user
+        cursor.execute("""
+            INSERT INTO [dbo].[Users] (Username, Email, Password, FullName)
+            OUTPUT INSERTED.Id, INSERTED.Username, INSERTED.Email, INSERTED.FullName
+            VALUES (?, ?, ?, ?)
+        """, (username, email, hashed_password, full_name))
+        
+        result = cursor.fetchone()
+        conn.commit()
+        
+        if result:
+            user_data = {
+                'id': result[0],
+                'username': result[1],
+                'email': result[2],
+                'fullName': result[3]
+            }
+            
+            # Send welcome email
+            try:
+                send_welcome_email(user_data['email'], user_data['fullName'] or user_data['username'])
+            except Exception as e:
+                print(f'Email sending error (non-critical): {str(e)}')
+                # Don't fail registration if email fails
+            
+            return jsonify({
+                'message': 'User registered successfully',
+                'user': user_data
+            }), 201
+        else:
+            return jsonify({'message': 'Registration failed'}), 500
+            
+    except Exception as e:
+        print(f'Registration error: {str(e)}')
+        return jsonify({'message': 'Server error during registration'}), 500
+    finally:
+        if conn:
+            conn.close()
+            global db_conn
+            db_conn = None
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """Login user"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'message': 'Database connection unavailable. Please check SQL Server configuration.'}), 503
+    
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({'message': 'Username and password are required'}), 400
+        
+        cursor = conn.cursor()
+        
+        # Find user
+        cursor.execute("""
+            SELECT * FROM [dbo].[Users] 
+            WHERE Username = ?
+        """, (username,))
+        
+        user = cursor.fetchone()
+        
+        if not user:
+            return jsonify({'message': 'Invalid username or password'}), 401
+        
+        # Verify password
+        if not bcrypt.checkpw(password.encode('utf-8'), user[3].encode('utf-8')):
+            return jsonify({'message': 'Invalid username or password'}), 401
+        
+        # Update last login
+        cursor.execute("""
+            UPDATE [dbo].[Users] 
+            SET LastLogin = GETDATE() 
+            WHERE Id = ?
+        """, (user[0],))
+        conn.commit()
+        
+        # Generate JWT token
+        token = jwt.encode(
+            {
+                'userId': user[0],
+                'username': user[1],
+                'exp': datetime.utcnow() + timedelta(days=7)
+            },
+            JWT_SECRET,
+            algorithm='HS256'
+        )
+        
+        return jsonify({
+            'message': 'Login successful',
+            'token': token,
+            'userId': user[0],
+            'username': user[1],
+            'fullName': user[4]
+        }), 200
+        
+    except Exception as e:
+        print(f'Login error: {str(e)}')
+        return jsonify({'message': 'Server error during login'}), 500
+    finally:
+        if conn:
+            conn.close()
+            global db_conn
+            db_conn = None
+
+@app.route('/api/auth/me', methods=['GET'])
+@token_required
+def get_current_user():
+    """Get current user info"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'message': 'Database connection unavailable. Please check SQL Server configuration.'}), 503
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT Id, Username, Email, FullName, CreatedAt, LastLogin 
+            FROM [dbo].[Users] 
+            WHERE Id = ?
+        """, (request.user['userId'],))
+        
+        user = cursor.fetchone()
+        
+        if not user:
+            return jsonify({'message': 'User not found'}), 404
+        
+        return jsonify({
+            'user': {
+                'Id': user[0],
+                'Username': user[1],
+                'Email': user[2],
+                'FullName': user[3],
+                'CreatedAt': user[4].isoformat() if user[4] else None,
+                'LastLogin': user[5].isoformat() if user[5] else None
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f'Get user error: {str(e)}')
+        return jsonify({'message': 'Server error'}), 500
+    finally:
+        if conn:
+            conn.close()
+            global db_conn
+            db_conn = None
+
+# Task Management Routes
+
+@app.route('/api/tasks', methods=['GET'])
+@token_required
+def get_tasks():
+    """Get all tasks for the current user"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'message': 'Database connection unavailable'}), 503
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT Id, TaskId, Type, Title, Description, Assignee, Priority, Status, CreatedAt, UpdatedAt
+            FROM [dbo].[Tasks]
+            WHERE UserId = ?
+            ORDER BY CreatedAt DESC
+        """, (request.user['userId'],))
+        
+        tasks = []
+        for row in cursor.fetchall():
+            task_id = row[1] or f'AUTO-{str(row[0]).zfill(3)}'
+            tasks.append({
+                'id': str(row[0]),
+                'taskId': task_id,
+                'type': row[2] or 'task',
+                'title': row[3],
+                'description': row[4] or '',
+                'assignee': row[5] or '',
+                'priority': row[6] or 'medium',
+                'status': row[7] or 'todo',
+                'createdAt': row[8].isoformat() if row[8] else None,
+                'updatedAt': row[9].isoformat() if row[9] else None
+            })
+        
+        return jsonify(tasks), 200
+        
+    except Exception as e:
+        print(f'Get tasks error: {str(e)}')
+        return jsonify({'message': 'Server error'}), 500
+    finally:
+        if conn:
+            conn.close()
+            global db_conn
+            db_conn = None
+
+@app.route('/api/tasks', methods=['POST'])
+@token_required
+def create_task():
+    """Create a new task"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'message': 'Database connection unavailable'}), 503
+    
+    try:
+        data = request.get_json()
+        cursor = conn.cursor()
+        
+        task_id = data.get('taskId') or f'AUTO-{int(datetime.now().timestamp() * 1000) % 10000}'
+        
+        cursor.execute("""
+            INSERT INTO [dbo].[Tasks] (UserId, TaskId, Type, Title, Description, Assignee, Priority, Status)
+            OUTPUT INSERTED.Id, INSERTED.TaskId, INSERTED.Type, INSERTED.Title, INSERTED.Description, 
+                   INSERTED.Assignee, INSERTED.Priority, INSERTED.Status, 
+                   INSERTED.CreatedAt, INSERTED.UpdatedAt
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            request.user['userId'],
+            task_id,
+            data.get('type', 'task'),
+            data.get('title'),
+            data.get('description', ''),
+            data.get('assignee', ''),
+            data.get('priority', 'medium'),
+            data.get('status', 'todo')
+        ))
+        
+        row = cursor.fetchone()
+        conn.commit()
+        
+        task = {
+            'id': str(row[0]),
+            'taskId': row[1] or task_id,
+            'type': row[2] or 'task',
+            'title': row[3],
+            'description': row[4] or '',
+            'assignee': row[5] or '',
+            'priority': row[6] or 'medium',
+            'status': row[7] or 'todo',
+            'createdAt': row[8].isoformat() if row[8] else None,
+            'updatedAt': row[9].isoformat() if row[9] else None
+        }
+        
+        return jsonify(task), 201
+        
+    except Exception as e:
+        print(f'Create task error: {str(e)}')
+        return jsonify({'message': 'Server error creating task'}), 500
+    finally:
+        if conn:
+            conn.close()
+            global db_conn
+            db_conn = None
+
+@app.route('/api/tasks/<int:task_id>', methods=['PUT'])
+@token_required
+def update_task(task_id):
+    """Update an existing task"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'message': 'Database connection unavailable'}), 503
+    
+    try:
+        data = request.get_json()
+        cursor = conn.cursor()
+        
+        # Check if task belongs to user
+        cursor.execute("""
+            SELECT UserId FROM [dbo].[Tasks] WHERE Id = ?
+        """, (task_id,))
+        
+        task = cursor.fetchone()
+        if not task or task[0] != request.user['userId']:
+            return jsonify({'message': 'Task not found'}), 404
+        
+        cursor.execute("""
+            UPDATE [dbo].[Tasks]
+            SET Type = ?, Title = ?, Description = ?, Assignee = ?, 
+                Priority = ?, Status = ?, UpdatedAt = GETDATE()
+            OUTPUT INSERTED.Id, INSERTED.TaskId, INSERTED.Type, INSERTED.Title, INSERTED.Description,
+                   INSERTED.Assignee, INSERTED.Priority, INSERTED.Status,
+                   INSERTED.CreatedAt, INSERTED.UpdatedAt
+            WHERE Id = ? AND UserId = ?
+        """, (
+            data.get('type', 'task'),
+            data.get('title'),
+            data.get('description', ''),
+            data.get('assignee', ''),
+            data.get('priority', 'medium'),
+            data.get('status', 'todo'),
+            task_id,
+            request.user['userId']
+        ))
+        
+        row = cursor.fetchone()
+        conn.commit()
+        
+        if not row:
+            return jsonify({'message': 'Task not found'}), 404
+        
+        task = {
+            'id': str(row[0]),
+            'taskId': row[1] or f'AUTO-{str(row[0]).zfill(3)}',
+            'type': row[2] or 'task',
+            'title': row[3],
+            'description': row[4] or '',
+            'assignee': row[5] or '',
+            'priority': row[6] or 'medium',
+            'status': row[7] or 'todo',
+            'createdAt': row[8].isoformat() if row[8] else None,
+            'updatedAt': row[9].isoformat() if row[9] else None
+        }
+        
+        return jsonify(task), 200
+        
+    except Exception as e:
+        print(f'Update task error: {str(e)}')
+        return jsonify({'message': 'Server error updating task'}), 500
+    finally:
+        if conn:
+            conn.close()
+            global db_conn
+            db_conn = None
+
+@app.route('/api/tasks/<int:task_id>', methods=['DELETE'])
+@token_required
+def delete_task(task_id):
+    """Delete a task"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'message': 'Database connection unavailable'}), 503
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Check if task belongs to user
+        cursor.execute("""
+            SELECT UserId FROM [dbo].[Tasks] WHERE Id = ?
+        """, (task_id,))
+        
+        task = cursor.fetchone()
+        if not task or task[0] != request.user['userId']:
+            return jsonify({'message': 'Task not found'}), 404
+        
+        cursor.execute("""
+            DELETE FROM [dbo].[Tasks] WHERE Id = ? AND UserId = ?
+        """, (task_id, request.user['userId']))
+        
+        conn.commit()
+        
+        return jsonify({'message': 'Task deleted successfully'}), 200
+        
+    except Exception as e:
+        print(f'Delete task error: {str(e)}')
+        return jsonify({'message': 'Server error deleting task'}), 500
+    finally:
+        if conn:
+            conn.close()
+            global db_conn
+            db_conn = None
+
+# Serve static files
+@app.route('/')
+def index():
+    """Serve login page"""
+    return send_from_directory('.', 'login.html')
+
+@app.route('/login.html')
+def login_page():
+    """Serve login page"""
+    return send_from_directory('.', 'login.html')
+
+@app.route('/index.html')
+def board_page():
+    """Serve task board page"""
+    return send_from_directory('.', 'index.html')
+
+@app.route('/<path:path>')
+def serve_static(path):
+    """Serve static files"""
+    return send_from_directory('.', path)
+
+if __name__ == '__main__':
+    # Get port from environment (Railway sets this automatically)
+    port = int(os.getenv('PORT', PORT))
+    debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+    
+    print(f'Starting Flask server on port {port}...')
+    print(f'Database: {DB_NAME} on {DB_SERVER}')
+    print(f'Debug mode: {debug_mode}')
+    
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)
+

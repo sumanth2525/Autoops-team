@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoOps - Quick Commands</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        }
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 32px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .section {
+            margin-bottom: 40px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        .section h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 24px;
+        }
+        .command-box {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            position: relative;
+            overflow-x: auto;
+        }
+        .command-box code {
+            display: block;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        .copy-btn:hover {
+            opacity: 1;
+        }
+        .step {
+            margin: 15px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+        .step::before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+            font-weight: bold;
+        }
+        .note {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 12px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 12px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .warning {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+            padding: 12px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .link {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 AutoOps Task Board - Quick Commands</h1>
+        <p class="subtitle">Copy and paste these commands to run the project</p>
+
+        <!-- Python Setup -->
+        <div class="section">
+            <h2>🐍 Python/Flask Setup (Recommended)</h2>
+            
+            <div class="step">
+                <strong>Step 1: Install Python Dependencies</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>pip install -r requirements.txt</code>
+                </div>
+            </div>
+
+            <div class="step">
+                <strong>Step 2: Install SQL Server Driver</strong>
+                <div class="note">
+                    <strong>⚠️ Note:</strong> Python 3.13 has compatibility issues. Use Python 3.11 or 3.12 for best results.
+                </div>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>pip install pyodbc</code>
+                </div>
+                <div class="note">
+                    If pyodbc fails, try: <code>pip install --only-binary :all: pyodbc</code>
+                </div>
+            </div>
+
+            <div class="step">
+                <strong>Step 3: Run the Flask Server</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>python app.py</code>
+                </div>
+            </div>
+
+            <div class="success">
+                <strong>✅ Success!</strong> Server will run on <strong>http://localhost:3001</strong>
+            </div>
+        </div>
+
+        <!-- Node.js Setup -->
+        <div class="section">
+            <h2>📦 Node.js/Express Setup (Alternative)</h2>
+            
+            <div class="step">
+                <strong>Step 1: Install Node.js Dependencies</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>npm install</code>
+                </div>
+            </div>
+
+            <div class="step">
+                <strong>Step 2: Run the Node.js Server</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>npm start</code>
+                </div>
+            </div>
+
+            <div class="success">
+                <strong>✅ Success!</strong> Server will run on <strong>http://localhost:3001</strong>
+            </div>
+        </div>
+
+        <!-- Database Setup -->
+        <div class="section">
+            <h2>🗄️ Database Setup</h2>
+            
+            <div class="step">
+                <strong>Step 1: Open SQL Server Management Studio (SSMS)</strong>
+            </div>
+
+            <div class="step">
+                <strong>Step 2: Connect to SQL Server</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>Server: SUMANTH\SQLEXPRESS</code>
+                </div>
+            </div>
+
+            <div class="step">
+                <strong>Step 3: Create Database</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>CREATE DATABASE AutoOpsDB;</code>
+                </div>
+            </div>
+
+            <div class="note">
+                <strong>💡 Tip:</strong> The server will automatically create tables on first connection.
+            </div>
+        </div>
+
+        <!-- Quick Access -->
+        <div class="section">
+            <h2>🌐 Access the Application</h2>
+            
+            <div class="step">
+                <strong>Open in Browser:</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>http://localhost:3001</code>
+                </div>
+            </div>
+
+            <div class="step">
+                <strong>Or click this link:</strong>
+                <div style="margin-top: 10px;">
+                    <a href="http://localhost:3001" class="link" target="_blank">http://localhost:3001</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Troubleshooting -->
+        <div class="section">
+            <h2>🔧 Troubleshooting Commands</h2>
+            
+            <div class="step">
+                <strong>Check if server is running:</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>netstat -ano | findstr :3001</code>
+                </div>
+            </div>
+
+            <div class="step">
+                <strong>Stop all Node.js processes:</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>taskkill /F /IM node.exe</code>
+                </div>
+            </div>
+
+            <div class="step">
+                <strong>Check Python version:</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>python --version</code>
+                </div>
+            </div>
+
+            <div class="step">
+                <strong>Check Node.js version:</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>node --version</code>
+                </div>
+            </div>
+        </div>
+
+        <!-- Environment Setup -->
+        <div class="section">
+            <h2>⚙️ Environment Configuration</h2>
+            
+            <div class="step">
+                <strong>Check .env file exists:</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>type .env</code>
+                </div>
+            </div>
+
+            <div class="step">
+                <strong>Edit .env file (if needed):</strong>
+                <div class="command-box">
+                    <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                    <code>notepad .env</code>
+                </div>
+            </div>
+
+            <div class="note">
+                <strong>Required .env variables:</strong><br>
+                DB_SERVER=SUMANTH\SQLEXPRESS<br>
+                DB_NAME=AutoOpsDB<br>
+                PORT=3001<br>
+                JWT_SECRET=your-secret-key
+            </div>
+        </div>
+
+        <!-- Quick Start Summary -->
+        <div class="section" style="background: #e7f3ff; border-left-color: #2196F3;">
+            <h2>⚡ Quick Start (Copy All)</h2>
+            <div class="command-box">
+                <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+                <code># Python Setup
+pip install -r requirements.txt
+pip install pyodbc
+python app.py
+
+# OR Node.js Setup
+npm install
+npm start
+
+# Then open: http://localhost:3001</code>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function copyCommand(button) {
+            const commandBox = button.nextElementSibling;
+            const text = commandBox.textContent.trim();
+            
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = button.textContent;
+                button.textContent = 'Copied!';
+                button.style.background = '#28a745';
+                
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.background = '#667eea';
+                }, 2000);
+            }).catch(err => {
+                alert('Failed to copy: ' + err);
+            });
+        }
+    </script>
+</body>
+</html>
+
