@@ -14,6 +14,7 @@ from flask_cors import CORS
 import bcrypt
 import jwt
 import os
+import secrets
 import requests
 import smtplib
 from email.mime.text import MIMEText
@@ -42,7 +43,12 @@ CORS(app)
 PORT = int(os.getenv('PORT', 3001))
 JWT_SECRET = os.getenv('JWT_SECRET')
 if not JWT_SECRET:
-    raise ValueError('JWT_SECRET environment variable is required. Please set it in your .env file.')
+    # Generate a secure random secret if not provided (for development/testing)
+    # In production, you should set JWT_SECRET as an environment variable
+    JWT_SECRET = secrets.token_urlsafe(32)
+    print('⚠️  WARNING: JWT_SECRET not set. Generated a temporary secret.')
+    print('⚠️  For production, please set JWT_SECRET as an environment variable in Railway.')
+    print(f'⚠️  Generated secret: {JWT_SECRET[:20]}... (use this or set your own)')
 
 # Email Configuration
 # Method: 'api' for Brevo REST API (default), 'smtp_brevo' for Brevo SMTP, or 'smtp_gmail' for Gmail SMTP
