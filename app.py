@@ -471,7 +471,7 @@ def register():
     """Register a new user"""
     conn = get_db_connection()
     if not conn:
-        return jsonify({'message': 'Database connection unavailable. Please check SQL Server configuration.'}), 503
+        return jsonify({'message': 'Database connection unavailable. Please check PostgreSQL configuration or set DATABASE_URL environment variable.'}), 503
     
     try:
         data = request.get_json()
@@ -545,7 +545,7 @@ def login():
     """Login user"""
     conn = get_db_connection()
     if not conn:
-        return jsonify({'message': 'Database connection unavailable. Please check SQL Server configuration.'}), 503
+        return jsonify({'message': 'Database connection unavailable. Please check PostgreSQL configuration or set DATABASE_URL environment variable.'}), 503
     
     try:
         data = request.get_json()
@@ -612,7 +612,7 @@ def get_current_user():
     """Get current user info"""
     conn = get_db_connection()
     if not conn:
-        return jsonify({'message': 'Database connection unavailable. Please check SQL Server configuration.'}), 503
+        return jsonify({'message': 'Database connection unavailable. Please check PostgreSQL configuration or set DATABASE_URL environment variable.'}), 503
     
     try:
         cursor = conn.cursor()
