@@ -41,7 +41,8 @@ function checkAuthentication() {
     }
 }
 
-const API_URL = 'http://localhost:3001/api';
+// Use relative URL for API - works both locally and in production
+const API_URL = window.location.origin + '/api';
 
 // Get authentication headers
 function getAuthHeaders() {
